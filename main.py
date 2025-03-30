@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException, Query
 from ffiec_data_connect import methods, credentials, ffiec_connection
 
-app = FastAPI(title="Deposit Data API")
+app = FastAPI(title="Institution-Wide Deposit Data API")
 
 @app.get("/bank_deposit")
 def get_deposit_data(
@@ -12,15 +12,15 @@ def get_deposit_data(
     reporting_period: str = Query(..., description="Reporting period (mm/dd/yyyy)")
 ):
     """
-    Retrieve only the deposit number from a bank's call report filing by filtering
-    for the MDRM code "RCON2200", which corresponds to Total Deposits.
+    Retrieve the institution-wide deposit number from a bank's call report filing.
+    This endpoint filters for the MDRM code "RCFD2200" (which is used for total deposits including domestic and foreign).
     """
     try:
-        # 1) Setup credentials/connection
+        # 1) Set up credentials and connection
         creds = credentials.WebserviceCredentials(username=user, password=token)
         conn = ffiec_connection.FFIECConnection()
 
-        # 2) Retrieve filers for the reporting period
+        # 2) Retrieve filers for the specified reporting period
         filers = methods.collect_filers_on_reporting_period(
             session=conn,
             creds=creds,
@@ -35,7 +35,7 @@ def get_deposit_data(
                 "deposit_data": None
             }
 
-        # 3) Filter to find the bank
+        # 3) Filter to find the specified bank by name (and optionally state)
         selected_filer = None
         for filer in filers:
             if isinstance(filer, dict):
@@ -67,7 +67,7 @@ def get_deposit_data(
                 "deposit_data": None
             }
 
-        # 4) Retrieve raw call report data for the bank
+        # 4) Retrieve raw call report time series data for the bank
         try:
             time_series = methods.collect_data(
                 session=conn,
@@ -77,16 +77,14 @@ def get_deposit_data(
                 series="call"
             )
         except Exception as inner_exc:
-            # Check if it’s the “object reference” error from FFIEC
             if "Object reference not set to an instance of an object" in str(inner_exc):
                 return {
                     "status": "no_data",
-                    "message": "The FFIEC service returned 'Object reference not set...' for this period. Possibly no data was filed.",
+                    "message": "The FFIEC service returned an 'Object reference not set...' error for this period, possibly indicating no data was filed.",
                     "selected_filer": selected_filer,
                     "deposit_data": None
                 }
             else:
-                # Otherwise, re-raise or handle differently
                 raise HTTPException(status_code=500, detail=str(inner_exc))
 
         if not time_series:
@@ -97,16 +95,16 @@ def get_deposit_data(
                 "deposit_data": None
             }
 
-        # 5) Filter for the deposit metric
+        # 5) Filter for the deposit metric with MDRM code "RCFD2200"
         deposit_metrics = [
             metric for metric in time_series
-            if metric.get("mdrm", "").upper() == "RCON2200"
+            if metric.get("mdrm", "").upper() == "RCFD2200"
         ]
 
         if not deposit_metrics:
             return {
                 "status": "no_deposit",
-                "message": "No deposit metric (RCON2200) found in the filing for this period.",
+                "message": "Deposit metric (RCFD2200) not found in the filing for the specified period.",
                 "selected_filer": selected_filer,
                 "deposit_data": None
             }
@@ -119,5 +117,4 @@ def get_deposit_data(
         }
 
     except Exception as e:
-        # If it’s some other error, we can still return 500 or handle differently
         raise HTTPException(status_code=500, detail=str(e))
