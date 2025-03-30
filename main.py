@@ -55,7 +55,7 @@ def get_deposit_data(
         if not rssd_id:
             raise HTTPException(status_code=500, detail="No RSSD ID found for the selected bank.")
 
-        # Retrieve raw time series call report data for the bank
+        # Retrieve raw call report data for the bank
         time_series = methods.collect_data(
             session=conn,
             creds=creds,
@@ -63,18 +63,19 @@ def get_deposit_data(
             reporting_period=reporting_period,
             series="call"
         )
-        if time_series is None:
+        if not time_series:
             raise HTTPException(status_code=500, detail="No time series data returned.")
 
         # Filter for the deposit metric with MDRM code "RCON2200"
         deposit_metrics = [metric for metric in time_series if metric.get("mdrm", "").upper() == "RCON2200"]
 
         if not deposit_metrics:
-            raise HTTPException(status_code=404, detail="Deposit metric (RCON2200) not found in the filing.")
+            raise HTTPException(status_code=404, detail="Deposit metric (RCON2200) not found in the filing for the specified reporting period.")
 
         return {
             "selected_filer": selected_filer,
             "deposit_data": deposit_metrics
         }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
