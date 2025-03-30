@@ -16,11 +16,11 @@ def get_deposit_data(
     for the MDRM code "RCON2200", which corresponds to Total Deposits.
     """
     try:
-        # Set up credentials and connection
+        # 1) Setup credentials/connection
         creds = credentials.WebserviceCredentials(username=user, password=token)
         conn = ffiec_connection.FFIECConnection()
 
-        # Retrieve filers for the reporting period.
+        # 2) Retrieve filers for the reporting period
         filers = methods.collect_filers_on_reporting_period(
             session=conn,
             creds=creds,
@@ -28,12 +28,14 @@ def get_deposit_data(
             output_type="list"
         )
         if not filers:
-            raise HTTPException(
-                status_code=500,
-                detail="No filers returned. Check the reporting period format or availability."
-            )
+            return {
+                "status": "no_filers",
+                "message": f"No filers returned for period {reporting_period}.",
+                "selected_filer": None,
+                "deposit_data": None
+            }
 
-        # Filter to find the specified bank (by name and optionally state)
+        # 3) Filter to find the bank
         selected_filer = None
         for filer in filers:
             if isinstance(filer, dict):
@@ -49,33 +51,73 @@ def get_deposit_data(
                         break
 
         if not selected_filer:
-            raise HTTPException(status_code=404, detail="Bank not found for that reporting period.")
+            return {
+                "status": "bank_not_found",
+                "message": f"Bank '{bank_name}' not found for period {reporting_period}.",
+                "selected_filer": None,
+                "deposit_data": None
+            }
 
         rssd_id = selected_filer.get("id_rssd")
         if not rssd_id:
-            raise HTTPException(status_code=500, detail="No RSSD ID found for the selected bank.")
+            return {
+                "status": "no_rssd",
+                "message": "No RSSD ID found for the selected bank.",
+                "selected_filer": selected_filer,
+                "deposit_data": None
+            }
 
-        # Retrieve raw call report data for the bank
-        time_series = methods.collect_data(
-            session=conn,
-            creds=creds,
-            rssd_id=rssd_id,
-            reporting_period=reporting_period,
-            series="call"
-        )
+        # 4) Retrieve raw call report data for the bank
+        try:
+            time_series = methods.collect_data(
+                session=conn,
+                creds=creds,
+                rssd_id=rssd_id,
+                reporting_period=reporting_period,
+                series="call"
+            )
+        except Exception as inner_exc:
+            # Check if it’s the “object reference” error from FFIEC
+            if "Object reference not set to an instance of an object" in str(inner_exc):
+                return {
+                    "status": "no_data",
+                    "message": "The FFIEC service returned 'Object reference not set...' for this period. Possibly no data was filed.",
+                    "selected_filer": selected_filer,
+                    "deposit_data": None
+                }
+            else:
+                # Otherwise, re-raise or handle differently
+                raise HTTPException(status_code=500, detail=str(inner_exc))
+
         if not time_series:
-            raise HTTPException(status_code=500, detail="No time series data returned.")
+            return {
+                "status": "no_timeseries",
+                "message": "No time series data returned.",
+                "selected_filer": selected_filer,
+                "deposit_data": None
+            }
 
-        # Filter for the deposit metric with MDRM code "RCON2200"
-        deposit_metrics = [metric for metric in time_series if metric.get("mdrm", "").upper() == "RCON2200"]
+        # 5) Filter for the deposit metric
+        deposit_metrics = [
+            metric for metric in time_series
+            if metric.get("mdrm", "").upper() == "RCON2200"
+        ]
 
         if not deposit_metrics:
-            raise HTTPException(status_code=404, detail="Deposit metric (RCON2200) not found in the filing for the specified reporting period.")
+            return {
+                "status": "no_deposit",
+                "message": "No deposit metric (RCON2200) found in the filing for this period.",
+                "selected_filer": selected_filer,
+                "deposit_data": None
+            }
 
         return {
+            "status": "success",
+            "message": "Deposit metric found.",
             "selected_filer": selected_filer,
             "deposit_data": deposit_metrics
         }
 
     except Exception as e:
+        # If it’s some other error, we can still return 500 or handle differently
         raise HTTPException(status_code=500, detail=str(e))
