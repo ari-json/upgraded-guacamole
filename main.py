@@ -18,8 +18,7 @@ def get_bank_reports(
         creds = credentials.WebserviceCredentials(username=user, password=token)
         conn = ffiec_connection.FFIECConnection()
 
-        # For example purposes, assume the method below returns a list of call reports
-        # (Adjust to use the correct method if needed, e.g., collecting reporting periods or call reports)
+        # Retrieve data (could be a list of dicts or strings)
         call_reports = methods.collect_reporting_periods(
             session=conn,
             creds=creds,
@@ -27,19 +26,29 @@ def get_bank_reports(
             date_output_format="string_original"
         )
 
-        # Filter by bank name. Adjust the filtering logic as per the actual structure of the data.
-        filtered_reports = [
-            report for report in call_reports 
-            if bank_name.lower() in report.get("institutionName", "").lower()
-        ]
+        # Create debug info for the first few items to inspect the data type/structure
+        debug_info = [{"type": type(report).__name__, "value": report} for report in call_reports[:3]]
 
-        # Optionally filter by state if provided
-        if state:
-            filtered_reports = [
-                report for report in filtered_reports 
-                if state.lower() in report.get("state", "").lower()
-            ]
+        filtered_reports = []
+        for report in call_reports:
+            # If report is a dict, try to filter based on "institutionName" and optionally "state"
+            if isinstance(report, dict):
+                institution_name = report.get("institutionName", "")
+                report_state = report.get("state", "")
+                if bank_name.lower() in institution_name.lower():
+                    if state:
+                        if state.lower() in report_state.lower():
+                            filtered_reports.append(report)
+                    else:
+                        filtered_reports.append(report)
+            # If report is a string, do a simple substring check
+            elif isinstance(report, str):
+                if bank_name.lower() in report.lower():
+                    filtered_reports.append(report)
+            else:
+                # If it's an unexpected type, you can choose to log or skip it
+                continue
 
-        return {"bank_reports": filtered_reports}
+        return {"debug": debug_info, "bank_reports": filtered_reports}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
