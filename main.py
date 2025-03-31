@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException, Query
 from ffiec_data_connect import methods, credentials, ffiec_connection
 
-app = FastAPI(title="Institution-Wide Deposit Data API")
+app = FastAPI(title="Deposit Data API")
 
 @app.get("/bank_deposit")
 def get_deposit_data(
@@ -12,8 +12,8 @@ def get_deposit_data(
     reporting_period: str = Query(..., description="Reporting period (mm/dd/yyyy)")
 ):
     """
-    Retrieve the institution-wide deposit number from a bank's call report filing.
-    This endpoint filters for the MDRM code "RCFD2200" (which is used for total deposits including domestic and foreign).
+    Retrieve the deposit number from a bank's call report filing by filtering
+    for the MDRM codes "RCON2200" or "RCFN2200", which correspond to deposit numbers.
     """
     try:
         # 1) Set up credentials and connection
@@ -67,7 +67,7 @@ def get_deposit_data(
                 "deposit_data": None
             }
 
-        # 4) Retrieve raw call report time series data for the bank
+        # 4) Retrieve raw call report data for the bank
         try:
             time_series = methods.collect_data(
                 session=conn,
@@ -80,7 +80,7 @@ def get_deposit_data(
             if "Object reference not set to an instance of an object" in str(inner_exc):
                 return {
                     "status": "no_data",
-                    "message": "The FFIEC service returned an 'Object reference not set...' error for this period, possibly indicating no data was filed.",
+                    "message": "The FFIEC service returned 'Object reference not set...' for this period, possibly indicating no data was filed.",
                     "selected_filer": selected_filer,
                     "deposit_data": None
                 }
@@ -95,16 +95,16 @@ def get_deposit_data(
                 "deposit_data": None
             }
 
-        # 5) Filter for the deposit metric with MDRM code "RCFD2200"
+        # 5) Filter for the deposit metric using MDRM codes "RCON2200" or "RCFN2200"
         deposit_metrics = [
             metric for metric in time_series
-            if metric.get("mdrm", "").upper() == "RCFD2200"
+            if metric.get("mdrm", "").upper() in ["RCON2200", "RCFN2200"]
         ]
 
         if not deposit_metrics:
             return {
                 "status": "no_deposit",
-                "message": "Deposit metric (RCFD2200) not found in the filing for the specified period.",
+                "message": "Deposit metric (RCON2200 or RCFN2200) not found in the filing for the specified period.",
                 "selected_filer": selected_filer,
                 "deposit_data": None
             }
